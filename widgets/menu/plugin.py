@@ -135,11 +135,48 @@ class PluginHandler(object):
     def load_plugin(self, pluginname, reload=False):
         assert pluginname not in self.plugins
         importlib.invalidate_caches()
+        # check for optional deps (e.g. tkinter) before importing the plugin module
         try:
-            module = importlib.import_module("plugins."+pluginname)
+            pluginpath = os.path.join(pluginfolder, pluginname + ".py")
+            if os.path.exists(pluginpath):
+                with open(pluginpath, "r", encoding="utf-8") as fh:
+                    src = fh.read()
+                # If the plugin file itself references tkinter, check availability
+                if "tkinter" in src:
+                    try:
+                        import tkinter  # type: ignore
+                    except Exception:
+                        print(f"Skipping plugin {pluginname}: tkinter not available")
+                        return
+
+                # Detect imports of subpackages under plugins (e.g. plugins.sfx_editor)
+                import re
+                matches = re.findall(r"plugins\.([A-Za-z0-9_]+)", src)
+                for sub in set(matches):
+                    subpath = os.path.join(pluginfolder, sub)
+                    # if a subpackage directory exists, scan its files for tkinter usage
+                    if os.path.isdir(subpath):
+                        for root, dirs, files in os.walk(subpath):
+                            for fname in files:
+                                if not fname.endswith('.py'):
+                                    continue
+                                fpath = os.path.join(root, fname)
+                                try:
+                                    with open(fpath, 'r', encoding='utf-8') as sf:
+                                        ssrc = sf.read()
+                                except Exception:
+                                    continue
+                                if 'tkinter' in ssrc:
+                                    try:
+                                        import tkinter  # type: ignore
+                                    except Exception:
+                                        print(f"Skipping plugin {pluginname}: '{sub}' requires tkinter which is not available")
+                                        return
+
+            module = importlib.import_module("plugins." + pluginname)
             module.__hotload = True
             plugin = module.Plugin()
-        except:
+        except Exception:
             traceback.print_exc()
         else:
             module.__time = os.stat(pluginfolder).st_mtime

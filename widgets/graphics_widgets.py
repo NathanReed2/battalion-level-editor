@@ -220,7 +220,16 @@ class UnitViewer(QtOpenGLWidgets.QOpenGLWidget):
     def setup_camera(self, width, height):
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        gluPerspective(75, width / height, 0.1, 4000.0)
+        # gluPerspective may not be available until a GL/Glu implementation is present.
+        # Guard the call to avoid NullFunctionError on systems without GLU.
+        if 'gluPerspective' in globals() and bool(gluPerspective):
+            try:
+                gluPerspective(75, width / height, 0.1, 4000.0)
+            except Exception:
+                # fallback: set viewport and use identity projection
+                glViewport(0, 0, width, height)
+        else:
+            glViewport(0, 0, width, height)
 
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
@@ -253,9 +262,17 @@ class UnitViewer(QtOpenGLWidgets.QOpenGLWidget):
         x = math.sin(angle)*radius*zoomlevel*math.cos(self.vertical_angle)
         y = math.cos(angle)*radius*zoomlevel*math.cos(self.vertical_angle)
         z = math.sin(self.vertical_angle)*radius*zoomlevel+self.camera_from_height
-        gluLookAt(x, y, z,
-                  self.camera_lookat[0], self.camera_lookat[1], self.camera_lookat[2],
-                  0, 0, 1)
+        # gluLookAt can also be unavailable depending on OpenGL binding/platform.
+        if 'gluLookAt' in globals() and bool(gluLookAt):
+            try:
+                gluLookAt(x, y, z,
+                          self.camera_lookat[0], self.camera_lookat[1], self.camera_lookat[2],
+                          0, 0, 1)
+            except Exception:
+                # fallback: approximate camera with translate
+                glTranslatef(-x, -y, -z)
+        else:
+            glTranslatef(-x, -y, -z)
 
     @classmethod
     def screenshot_objects(cls, objects, editor):
