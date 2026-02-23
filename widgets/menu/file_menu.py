@@ -33,6 +33,44 @@ if TYPE_CHECKING:
     from lib.bw_terrain import BWTerrainV2
 
 
+def resolve_case_insensitive_join(base, relpath):
+    """Join `base` and `relpath` but try a case-insensitive lookup for each path component
+    if the exact path doesn't exist. Returns a filesystem path (may not exist).
+    """
+    if relpath is None:
+        return None
+    # Normalise separators from XML (always forward slash) to OS separator
+    rel = relpath.replace("/", os.sep)
+    target = os.path.join(base, rel)
+    if os.path.exists(target):
+        return target
+
+    parts = [p for p in rel.split(os.sep) if p != ""]
+    curr = base
+    for part in parts:
+        try_exact = os.path.join(curr, part)
+        if os.path.exists(try_exact):
+            curr = try_exact
+            continue
+
+        found = None
+        try:
+            for entry in os.listdir(curr):
+                if entry.lower() == part.lower():
+                    found = os.path.join(curr, entry)
+                    break
+        except FileNotFoundError:
+            found = None
+
+        if found is None:
+            # cannot resolve; return original target so caller will raise FileNotFoundError
+            return target
+
+        curr = found
+
+    return curr
+
+
 class LoadingBar(QtWidgets.QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -292,31 +330,34 @@ class EditorFileMenu(QMenu):
                     progressbar = LoadingProgress("Loading", loadingbar)
                     QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                     progressbar.progressupdate.connect(self.updatestatus)
+                    objpath = resolve_case_insensitive_join(base, levelpaths.objectpath)
                     if levelpaths.objectpath.endswith(".gz"):
-                        with gzip.open(os.path.join(base, levelpaths.objectpath), "rb") as g:
+                        with gzip.open(objpath, "rb") as g:
                             level_data = BattalionLevelFile(g, partial(progressbar.callback, 10))
                     else:
-                        with open(os.path.join(base, levelpaths.objectpath), "rb") as g:
+                        with open(objpath, "rb") as g:
                             level_data = BattalionLevelFile(g, partial(progressbar.callback, 10))
 
                     progressbar.set(10)
+                    preloadpath = resolve_case_insensitive_join(base, levelpaths.preloadpath)
                     if levelpaths.preloadpath.endswith(".gz"):
-                        with gzip.open(os.path.join(base, levelpaths.preloadpath), "rb") as g:
+                        with gzip.open(preloadpath, "rb") as g:
                             preload_data = BattalionLevelFile(g, partial(progressbar.callback, 10))
                     else:
-                        with open(os.path.join(base, levelpaths.preloadpath), "rb") as g:
+                        with open(preloadpath, "rb") as g:
                             preload_data = BattalionLevelFile(g, partial(progressbar.callback, 10))
 
                     progressbar.set(20)
                     level_data.resolve_pointers(preload_data)
                     preload_data.resolve_pointers(level_data)
 
+                    resourcepath = resolve_case_insensitive_join(base, levelpaths.resourcepath)
                     if levelpaths.resourcepath.endswith(".gz"):
-                        with gzip.open(os.path.join(base, levelpaths.resourcepath), "rb") as g:
+                        with gzip.open(resourcepath, "rb") as g:
                             resource_archive = BattalionArchive.from_file(g)
 
                     else:
-                        with open(os.path.join(base, levelpaths.resourcepath), "rb") as g:
+                        with open(resourcepath, "rb") as g:
                             resource_archive = BattalionArchive.from_file(g)
 
                     del self.editor.lua_workbench
@@ -350,11 +391,12 @@ class EditorFileMenu(QMenu):
                     progressbar.set(60)
 
                     print("Reloading terrain...")
+                    terrainpath = resolve_case_insensitive_join(base, levelpaths.terrainpath)
                     if levelpaths.terrainpath.endswith(".gz"):
-                        with gzip.open(os.path.join(base, levelpaths.terrainpath), "rb") as g:
+                        with gzip.open(terrainpath, "rb") as g:
                             self.editor.level_view.reloadTerrain(g, partial(progressbar.callback, 30))
                     else:
-                        with open(os.path.join(base, levelpaths.terrainpath), "rb") as g:
+                        with open(terrainpath, "rb") as g:
                             self.editor.level_view.reloadTerrain(g, partial(progressbar.callback, 30))
 
                     progressbar.set(100)
@@ -453,8 +495,8 @@ class EditorFileMenu(QMenu):
                 if self.level_paths.dirty:
                     if levelpaths.terrainpath.endswith(".gz"):
                         oldpath = levelpaths.terrainpath.removesuffix(".gz")
-                        pathold = os.path.join(base, oldpath)
-                        pathnew = os.path.join(base, levelpaths.terrainpath)
+                        pathold = resolve_case_insensitive_join(base, oldpath)
+                        pathnew = resolve_case_insensitive_join(base, levelpaths.terrainpath)
 
                         with open(pathold, "rb") as f:
                             data = f.read()
@@ -462,8 +504,8 @@ class EditorFileMenu(QMenu):
                             f.write(data)
                     else:
                         oldpath = levelpaths.terrainpath + ".gz"
-                        pathold = os.path.join(base, oldpath)
-                        pathnew = os.path.join(base, levelpaths.terrainpath)
+                        pathold = resolve_case_insensitive_join(base, oldpath)
+                        pathnew = resolve_case_insensitive_join(base, levelpaths.terrainpath)
 
                         with gzip.open(pathold, "rb") as f:
                             data = f.read()
@@ -474,7 +516,7 @@ class EditorFileMenu(QMenu):
                 if (self.editor.editorconfig.getboolean("recompile_lua", fallback=True)
                     and self.editor.lua_workbench.is_initialized()):
                     try:
-                        respath = os.path.join(base, levelpaths.resourcepath)
+                        respath = resolve_case_insensitive_join(base, levelpaths.resourcepath)
                         self.editor.lua_workbench.repack_scripts(self.resource_archive,
                                                                  scripts=[x.mName for x in self.level_data.scripts.values()]
                                                                  )
@@ -514,11 +556,12 @@ class EditorFileMenu(QMenu):
                 print("Writing preload data to temp file...")
                 self.preload_data.write(tmp2)
 
+                obj_out_path = resolve_case_insensitive_join(base, levelpaths.objectpath)
                 if levelpaths.objectpath.endswith(".gz"):
-                    with gzip.open(os.path.join(base, levelpaths.objectpath), "wb") as g:
+                    with gzip.open(obj_out_path, "wb") as g:
                         g.write(tmp.getvalue())
                 else:
-                    with open(os.path.join(base, levelpaths.objectpath), "wb") as g:
+                    with open(obj_out_path, "wb") as g:
                         g.write(tmp.getvalue())
                         if self.level_paths.objectfilepadding is not None:
                             if g.tell() < self.level_paths.objectfilepadding:
@@ -535,11 +578,12 @@ class EditorFileMenu(QMenu):
 
                 progressbar.set(90)
 
+                preload_out_path = resolve_case_insensitive_join(base, levelpaths.preloadpath)
                 if levelpaths.preloadpath.endswith(".gz"):
-                    with gzip.open(os.path.join(base, levelpaths.preloadpath), "wb") as g:
+                    with gzip.open(preload_out_path, "wb") as g:
                         g.write(tmp2.getvalue())
                 else:
-                    with open(os.path.join(base, levelpaths.preloadpath), "wb") as g:
+                    with open(preload_out_path, "wb") as g:
                         g.write(tmp2.getvalue())
                         if self.level_paths.preloadpadding is not None:
                             if g.tell() < self.level_paths.preloadpadding:
@@ -557,7 +601,8 @@ class EditorFileMenu(QMenu):
                     out = BytesIO()
                     self.resource_archive.write(out)
 
-                    with gzip.open(os.path.join(base, levelpaths.resourcepath), "wb") as f:
+                    res_out_path = resolve_case_insensitive_join(base, levelpaths.resourcepath)
+                    with gzip.open(res_out_path, "wb") as f:
                         f.write(out.getvalue())
                 else:
                     self.resource_archive.set_additional_padding(0)
@@ -571,7 +616,8 @@ class EditorFileMenu(QMenu):
                     out = BytesIO()
                     self.resource_archive.write(out)
 
-                    with open(os.path.join(base, levelpaths.resourcepath), "wb") as f:
+                    res_out_path = resolve_case_insensitive_join(base, levelpaths.resourcepath)
+                    with open(res_out_path, "wb") as f:
                         f.write(out.getvalue())
 
 
