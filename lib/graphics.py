@@ -1,6 +1,6 @@
 import json
 import numpy
-from math import sin, cos, pi
+from math import sin, cos, pi, tan
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from lib.vectors import Vector3
@@ -149,7 +149,21 @@ class Graphics(object):
         rw = self.rw
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        gluPerspective(75, width / height, 0.1, 4000.0)
+        # Use gluPerspective when available, otherwise fallback to glFrustum
+        try:
+            if bool(gluPerspective):
+                gluPerspective(75, width / height, 0.1, 4000.0)
+            else:
+                raise Exception("gluPerspective not available")
+        except Exception:
+            # fallback: compute frustum from fovy/aspect
+            fovy = 75.0
+            aspect = (width / height) if height != 0 else 1.0
+            near = 0.1
+            far = 4000.0
+            top = near * tan(fovy * pi / 360.0)
+            right = top * aspect
+            glFrustum(-right, right, -top, top, near, far)
 
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
@@ -161,11 +175,44 @@ class Graphics(object):
         fac = 1.01 - abs(look_direction.z)
         # print(fac, look_direction.z, look_direction)
 
-        gluLookAt(rw.offset_x, rw.offset_z, rw.camera_height,
-                  rw.offset_x + look_direction.x * fac,
-                  rw.offset_z + look_direction.y * fac,
-                  rw.camera_height + look_direction.z,
-                  0, 0, 1)
+        # Use gluLookAt when available, otherwise compute and apply view matrix
+        try:
+            if bool(gluLookAt):
+                gluLookAt(rw.offset_x, rw.offset_z, rw.camera_height,
+                          rw.offset_x + look_direction.x * fac,
+                          rw.offset_z + look_direction.y * fac,
+                          rw.camera_height + look_direction.z,
+                          0, 0, 1)
+            else:
+                raise Exception("gluLookAt not available")
+        except Exception:
+            eye = numpy.array((rw.offset_x, rw.offset_z, rw.camera_height), dtype=numpy.float64)
+            center = numpy.array((rw.offset_x + look_direction.x * fac,
+                                   rw.offset_z + look_direction.y * fac,
+                                   rw.camera_height + look_direction.z), dtype=numpy.float64)
+            up = numpy.array((0.0, 0.0, 1.0), dtype=numpy.float64)
+
+            f = center - eye
+            f = f / numpy.linalg.norm(f)
+            upn = up / numpy.linalg.norm(up)
+            s = numpy.cross(f, upn)
+            if numpy.linalg.norm(s) == 0:
+                # fallback if up and f are colinear
+                s = numpy.array((1.0, 0.0, 0.0), dtype=numpy.float64)
+            else:
+                s = s / numpy.linalg.norm(s)
+            u = numpy.cross(s, f)
+
+            m = numpy.identity(4, dtype=numpy.float32)
+            m[0, 0:3] = s.astype(numpy.float32)
+            m[1, 0:3] = u.astype(numpy.float32)
+            m[2, 0:3] = (-f).astype(numpy.float32)
+            m[0, 3] = -numpy.dot(s, eye)
+            m[1, 3] = -numpy.dot(u, eye)
+            m[2, 3] = numpy.dot(f, eye)
+
+            # OpenGL expects column-major order
+            glMultMatrixf(m.T.flatten())
 
         rw.camera_direction = Vector3(look_direction.x * fac, look_direction.y * fac, look_direction.z)
 
