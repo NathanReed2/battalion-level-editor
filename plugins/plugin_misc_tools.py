@@ -11,7 +11,7 @@ import PyQt6.QtWidgets as QtWidgets
 import PyQt6.QtGui as QtGui
 import PyQt6.QtCore as QtCore
 from widgets.editor_widgets import open_error_dialog, open_message_dialog
-from widgets.menu.file_menu import PF2
+from widgets.menu.file_menu import PF2, resolve_case_insensitive_join
 from typing import TYPE_CHECKING
 from configuration import read_config, make_default_config, save_cfg
 from plugins.plugin_object_exportimport import LabeledWidget
@@ -380,8 +380,15 @@ class Plugin(object):
                      levelpaths.resourcepath,
                      levelpaths.objectpath,
                      levelpaths.preloadpath):
-            shutil.copy(os.path.join(base, path),
-                        os.path.join(savestatepath, path))
+            # Resolve case-insensitive path on disk and copy if present. If the
+            # file is stored inside an archive (e.g. PF2/compound file) it may
+            # not exist on disk; skip missing files instead of raising.
+            try:
+                src = resolve_case_insensitive_join(base, path)
+                shutil.copy(src,
+                            os.path.join(savestatepath, path))
+            except FileNotFoundError:
+                print(f"Warning: {os.path.join(base, path)} not found; skipping copy.")
 
         pf2path = fname[:-4] + ".pf2"
         try:
@@ -389,6 +396,51 @@ class Plugin(object):
                         os.path.join(savestatepath,pf2path))
         except FileNotFoundError:
             pass
+        else:
+            # If the PF2 was copied successfully, try to extract boundary/ford/nogo
+            # imagery from the PF2 into the savestate so restore can bring them back.
+            try:
+                pf2_src = resolve_case_insensitive_join(base, pf2path)
+                if os.path.exists(os.path.join(savestatepath, pf2path)) and os.path.exists(pf2_src):
+                    try:
+                        pf2 = PF2(pf2_src)
+                        # write images into savestate folder using same base name
+                        base_noext = os.path.join(savestatepath, fname[:-4])
+                        # Create and save images
+                        missionboundary = Image.new("RGB", (512, 512))
+                        ford = Image.new("RGB", (512, 512))
+                        nogo = Image.new("RGB", (512, 512))
+
+                        for i in range(512*512):
+                            x = (i) % 512
+                            y = (i) // 512
+                            if x < 256:
+                                x *= 2
+                            else:
+                                x = x - 256
+                                x *= 2
+                                x += 1
+
+                            # NOGO
+                            val = pf2.data[x][y][0]
+                            nogo.putpixel((x,y), (val, val, val))
+
+                            # FORD
+                            val = pf2.data[x][y][1]
+                            ford.putpixel((x, y), (val, val, val))
+
+                            # MISSION BOUNDARY
+                            val = pf2.data[x][y][2]
+                            missionboundary.putpixel((x,y), (val, val, val))
+
+                        ImageOps.flip(nogo).save(base_noext+"_nogo.png")
+                        ImageOps.flip(ford).save(base_noext+"_ford.png")
+                        ImageOps.flip(missionboundary).save(base_noext+"_boundary.png")
+                    except Exception:
+                        # Non-fatal: extraction failed, continue
+                        print("Warning: failed to extract images from PF2 for savestate")
+            except Exception:
+                pass
         print("Saved autosave to", savestatepath)
         autosaves = self.get_autosaves()
 
@@ -500,6 +552,18 @@ class Plugin(object):
                     shutil.copy(os.path.join(savestatepath, pf2path),
                                 os.path.join(base, pf2path))
                 except FileNotFoundError:
+                    pass
+
+                # Also restore any generated boundary/ford/nogo PNGs if present
+                try:
+                    base_noext = os.path.join(base, fname[:-4])
+                    savestate_base_noext = os.path.join(savestatepath, fname[:-4])
+                    for suffix in ("_boundary.png", "_ford.png", "_nogo.png"):
+                        srcimg = savestate_base_noext + suffix
+                        dstimg = base_noext + suffix
+                        if os.path.exists(srcimg):
+                            shutil.copy(srcimg, dstimg)
+                except Exception:
                     pass
 
                 try:
