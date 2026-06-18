@@ -13,3 +13,4 @@ editor_log.txt
 editor_config.ini
 savestates/*
 battalion_objects/*
+.vscode/settings.json
