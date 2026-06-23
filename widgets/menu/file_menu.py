@@ -26,6 +26,7 @@ from PyQt6.QtCore import QSize, pyqtSignal, QPoint, QRect, QObject
 from io import BytesIO
 from lib.lua.luaworkshop import LuaWorkbench
 from configuration import save_cfg
+from widgets.editor_preferences import EditorPreferencesDialog
 from typing import TYPE_CHECKING
 from widgets.menu.menu import Menu
 if TYPE_CHECKING:
@@ -162,15 +163,19 @@ class EditorFileMenu(QMenu):
         self.save_file_as_action.setShortcut("Ctrl+Alt+S")
 
         self.save_file_copy_as_action = QAction("Save Copy As", self)
+        self.editor_preferences_action = QAction("Editor Preferences", self)
 
         self.file_load_action.triggered.connect(self.button_load_level)
         self.save_file_action.triggered.connect(self.button_save_level)
         self.save_file_as_action.triggered.connect(self.button_save_level_as)
         self.save_file_copy_as_action.triggered.connect(self.button_save_level_copy_as)
+        self.editor_preferences_action.triggered.connect(self.open_editor_preferences)
 
         self.addAction(self.file_load_action)
         self.addAction(self.file_load_recent_menu.menuAction())
         self.addAction(self.save_file_action)
+        self.addSeparator()
+        self.addAction(self.editor_preferences_action)
         #self.addAction(self.save_file_as_action)
         #self.addAction(self.save_file_copy_as_action)
         self.is_loading = False
@@ -249,6 +254,10 @@ class EditorFileMenu(QMenu):
     def loadingcallback(self, base, max, progress):
         print(progress)
         QApplication.processEvents()
+
+    def open_editor_preferences(self):
+        dialog = EditorPreferencesDialog(self.editor, self.editor)
+        dialog.exec()
 
     def button_load_level(self, fpathoverride=None):
         if fpathoverride:
